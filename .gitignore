@@ -1,0 +1,23 @@
+# Whisper model files (too large for git)
+models/
+*.bin
+
+# Rust build artifacts
+/target/
+Cargo.lock
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Personal config overrides
+config.local.toml

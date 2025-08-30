@@ -1,0 +1,28 @@
+# TomChat Configuration
+# Named after Tommy 🐕
+
+[hotkey]
+# Using Ctrl+Alt+C - safe and reliable combination
+combination = "f10"
+
+[audio]
+# Audio capture settings
+sample_rate = 16000
+channels = 1
+buffer_duration_ms = 64  # Low latency
+
+[vad]
+# Voice Activity Detection settings  
+sensitivity = "Normal"  # Low, Normal, High, VeryHigh
+timeout_ms = 500       # Stop recording after 1 second of silence
+
+[whisper]
+# Whisper model settings
+# Default path - download model with: ./scripts/download-model.sh
+model_path = "./models/ggml-small.en-q8_0.bin"
+language = "en"
+translate = false
+
+[text]
+# Text injection settings
+typing_delay_ms = 1  # Delay between keystrokes
