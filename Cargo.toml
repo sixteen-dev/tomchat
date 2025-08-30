@@ -6,6 +6,14 @@ authors = ["Your Name <your.email@example.com>"]
 description = "TomChat - Speech-to-text hotkey application named after my late dog Tommy"
 license = "MIT"
 
+[lib]
+name = "tomchat_core"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "tomchat"
+path = "src/main.rs"
+
 [dependencies]
 # Async runtime
 tokio = { version = "1.0", features = ["full"] }

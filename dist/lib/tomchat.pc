@@ -1,0 +1,9 @@
+prefix=${pcfiledir}/../..
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: TomChat Core
+Description: Speech-to-text engine library
+Version: 0.1.0
+Libs: -L${libdir} -ltomchat_core
+Cflags: -I${includedir}
