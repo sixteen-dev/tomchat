@@ -17,6 +17,8 @@ pub struct TomChatApp {
     transcriber: SpeechTranscriber,
     text_injector: TextInjector,
     hotkey_manager: HotkeyManager,
+    gui_mode: bool,
+    test_mode: bool,
 }
 
 impl TomChatApp {
@@ -54,11 +56,53 @@ impl TomChatApp {
             transcriber,
             text_injector,
             hotkey_manager,
+            gui_mode: false,
+            test_mode: false,
         })
+    }
+    
+    pub fn set_gui_mode(&mut self, gui_mode: bool) {
+        self.gui_mode = gui_mode;
+    }
+    
+    pub fn set_test_mode(&mut self, test_mode: bool) {
+        self.test_mode = test_mode;
+    }
+    
+    // Emit JSON status event to stdout when in GUI mode
+    fn emit_status(&self, event: &str, message: &str) {
+        if self.gui_mode {
+            let json = serde_json::json!({
+                "event": event,
+                "message": message,
+                "timestamp": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+            });
+            println!("{}", json);
+        }
     }
 
     pub async fn run(mut self) -> Result<()> {
         info!("🚀 Starting TomChat application...");
+        
+        let gui_mode = self.gui_mode;
+        
+        // Helper function to emit status events (shareable)
+        let emit_status = Arc::new(move |event: &str, message: &str| {
+            if gui_mode {
+                let json = serde_json::json!({
+                    "event": event,
+                    "message": message,
+                    "timestamp": std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                });
+                println!("{}", json);
+            }
+        });
 
         // Create communication channels
         let (audio_tx, mut audio_rx) = mpsc::unbounded_channel::<Vec<f32>>();
@@ -70,9 +114,10 @@ impl TomChatApp {
         let recording_state = Arc::new(Mutex::new(RecordingState::default()));
         let audio_buffer = Arc::new(Mutex::new(VecDeque::<f32>::new()));
 
-        // Register hotkey
-        let hotkey_id = self.hotkey_manager.register_hotkey(&self.config.hotkey.combination)?;
-        info!("=% Hotkey registered: {}", self.config.hotkey.combination);
+        // Register hotkey (always register, even in GUI mode)
+        let id = self.hotkey_manager.register_hotkey(&self.config.hotkey.combination)?;
+        info!("🔑 Hotkey registered: {}", self.config.hotkey.combination);
+        let hotkey_id = id;
 
         // Start audio capture
         self.audio_capture.start_capture(audio_tx).await?;
@@ -82,6 +127,7 @@ impl TomChatApp {
         let recording_state_clone = recording_state.clone();
         let audio_buffer_clone = audio_buffer.clone();
         let transcription_tx_clone = transcription_tx.clone();
+        let emit_status_audio = emit_status.clone();
 
         // Audio processing task - manual control mode
         let audio_task = tokio::spawn(async move {
@@ -121,18 +167,27 @@ impl TomChatApp {
                         // Send for transcription
                         if !audio_data.is_empty() {
                             info!("📝 Transcribing {} audio samples", audio_data.len());
+                            emit_status_audio("transcribing", "Transcribing audio");
                             let transcriber = transcriber_clone.clone();
                             let tx = transcription_tx_clone.clone();
+                            let emit_clone = emit_status_audio.clone();
                             
                             tokio::spawn(async move {
                                 match transcriber.transcribe_audio(&audio_data).await {
                                     Ok(text) if !text.is_empty() => {
+                                        emit_clone("transcription_complete", &format!("Transcription: {}", text));
                                         if let Err(_) = tx.send(text).await {
                                             error!("Failed to send transcription");
                                         }
                                     }
-                                    Ok(_) => debug!("Empty transcription result"),
-                                    Err(e) => error!("Transcription failed: {}", e),
+                                    Ok(_) => {
+                                        emit_clone("transcription_complete", "Empty transcription result");
+                                        debug!("Empty transcription result")
+                                    },
+                                    Err(e) => {
+                                        emit_clone("transcription_error", &format!("Transcription failed: {}", e));
+                                        error!("Transcription failed: {}", e)
+                                    },
                                 }
                             });
                         } else {
@@ -170,10 +225,59 @@ impl TomChatApp {
 
         // Hotkey handling task  
         let recording_state_hotkey = recording_state.clone();
-        let hotkey_task = tokio::spawn(async move {
-            self.hotkey_manager.start_listening(hotkey_tx).await
-        });
+        let hotkey_task = if self.gui_mode {
+            // In GUI mode, create a dummy task that does nothing
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(u64::MAX)).await;
+                Ok(())
+            })
+        } else {
+            tokio::spawn(async move {
+                self.hotkey_manager.start_listening(hotkey_tx).await
+            })
+        };
 
+        // Clone emit_status for async tasks
+        let emit_status_hotkey = emit_status.clone();
+        
+        // Test mode: simulate recording events
+        if self.test_mode {
+            let emit_test = emit_status.clone();
+            let recording_state_test = recording_state.clone();
+            let process_tx_test = process_tx.clone();
+            
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                
+                loop {
+                    // Start recording
+                    emit_test("recording_started", "Test recording started");
+                    {
+                        let mut state = recording_state_test.lock().await;
+                        state.is_recording = true;
+                    }
+                    
+                    // Record for 3 seconds
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                    
+                    // Stop recording
+                    emit_test("recording_stopped", "Test recording stopped");
+                    {
+                        let mut state = recording_state_test.lock().await;
+                        state.is_recording = false;
+                    }
+                    
+                    // Trigger transcription
+                    if let Err(_) = process_tx_test.send(()).await {
+                        break;
+                    }
+                    
+                    // Wait before next cycle
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                }
+            });
+        }
+        
         // Main event loop
         let main_task = tokio::spawn(async move {
             while let Some(hotkey_event) = hotkey_rx.recv().await {
@@ -182,10 +286,12 @@ impl TomChatApp {
                     
                     if !state.is_recording {
                         info!("🎤 Recording started by hotkey");
+                        emit_status_hotkey("recording_started", "Recording started");
                         state.is_recording = true;
                         state.speech_detected = false;
                     } else {
                         info!("⏹️ Recording stopped by hotkey");
+                        emit_status_hotkey("recording_stopped", "Recording stopped");
                         state.is_recording = false;
                         state.speech_detected = false;
                         

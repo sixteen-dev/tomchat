@@ -210,12 +210,33 @@ fn parse_key_code(key: &str) -> Result<Code> {
         "f10" => Ok(Code::F10),
         "f11" => Ok(Code::F11),
         "f12" => Ok(Code::F12),
+        "f13" => Ok(Code::F13),
+        "f14" => Ok(Code::F14),
+        "f15" => Ok(Code::F15),
+        "f16" => Ok(Code::F16),
+        "f17" => Ok(Code::F17),
+        "f18" => Ok(Code::F18),
+        "f19" => Ok(Code::F19),
+        "f20" => Ok(Code::F20),
         
         // Arrow keys
         "up" => Ok(Code::ArrowUp),
         "down" => Ok(Code::ArrowDown),
         "left" => Ok(Code::ArrowLeft),
         "right" => Ok(Code::ArrowRight),
+        
+        // Special keys that might be useful for left-hand operation
+        "capslock" | "caps" | "caps_lock" | "capslk" => Ok(Code::CapsLock),
+        "insert" => Ok(Code::Insert),
+        "home" => Ok(Code::Home),
+        "end" => Ok(Code::End),
+        "pageup" => Ok(Code::PageUp),
+        "pagedown" => Ok(Code::PageDown),
+        
+        // Additional keys for better compatibility
+        "`" | "grave" => Ok(Code::Backquote),
+        "-" | "minus" => Ok(Code::Minus),
+        "=" | "equals" => Ok(Code::Equal),
         
         _ => Err(anyhow::anyhow!("Unknown key: {}", key)),
     }

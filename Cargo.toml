@@ -6,10 +6,6 @@ authors = ["Your Name <your.email@example.com>"]
 description = "TomChat - Speech-to-text hotkey application named after my late dog Tommy"
 license = "MIT"
 
-[lib]
-name = "tomchat_core"
-crate-type = ["cdylib", "rlib"]
-
 [[bin]]
 name = "tomchat"
 path = "src/main.rs"
@@ -35,6 +31,7 @@ enigo = "0.2"
 
 # Configuration management
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 toml = "0.8"
 
 # Error handling
@@ -47,6 +44,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Async channels
 tokio-util = "0.7"
 crossbeam-channel = "0.5"
+
+# Command line argument parsing
+clap = { version = "4.0", features = ["derive"] }
 
 [profile.release]
 lto = true
