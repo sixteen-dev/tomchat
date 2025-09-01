@@ -2,7 +2,8 @@ use anyhow::Result;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{error, info, debug};
+use tracing::{error, info, debug, warn};
+use std::fs;
 
 use crate::audio::{AudioCapture, VoiceActivityDetector};
 use crate::config::Config;
@@ -81,6 +82,54 @@ impl TomChatApp {
                     .as_secs()
             });
             println!("{}", json);
+        }
+    }
+
+    async fn notify_state_change(recording: bool) {
+        info!("State change: recording={}", recording);
+        
+        // Send state update to Tauri HTTP server
+        let client = reqwest::Client::new();
+        let state_update = serde_json::json!({
+            "recording": recording,
+            "timestamp": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        });
+        
+        let result = client
+            .post("http://localhost:8081/state")
+            .json(&state_update)
+            .send()
+            .await;
+            
+        match result {
+            Ok(_) => {
+                info!("State update sent to bubble via HTTP: recording={}", recording);
+            }
+            Err(e) => {
+                warn!("HTTP request failed: {}", e);
+                
+                // Fallback: write state to file
+                let state_update = serde_json::json!({
+                    "recording": recording,
+                    "timestamp": std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                });
+                
+                let state_file = "/tmp/tomchat_bubble_state.json";
+                match std::fs::write(state_file, state_update.to_string()) {
+                    Ok(_) => {
+                        info!("State written to file as fallback: recording={}", recording);
+                    }
+                    Err(file_err) => {
+                        error!("All communication methods failed: HTTP={}, File={}", e, file_err);
+                    }
+                }
+            }
         }
     }
 
@@ -289,11 +338,21 @@ impl TomChatApp {
                         emit_status_hotkey("recording_started", "Recording started");
                         state.is_recording = true;
                         state.speech_detected = false;
+                        
+                        // Notify bubble of state change
+                        tokio::spawn(async {
+                            TomChatApp::notify_state_change(true).await;
+                        });
                     } else {
                         info!("⏹️ Recording stopped by hotkey");
                         emit_status_hotkey("recording_stopped", "Recording stopped");
                         state.is_recording = false;
                         state.speech_detected = false;
+                        
+                        // Notify bubble of state change
+                        tokio::spawn(async {
+                            TomChatApp::notify_state_change(false).await;
+                        });
                         
                         // Signal audio processing to transcribe accumulated audio
                         if let Err(_) = process_tx.send(()).await {
