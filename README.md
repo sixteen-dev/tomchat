@@ -237,4 +237,4 @@ MIT License - see [LICENSE](LICENSE)
 
 ---
 
-**Named after Tommy** - Built with Rust + sherpa-rs
+**Named after my dog Tommy** - Built with Rust + sherpa-rs
