@@ -1,140 +1,135 @@
 use anyhow::Result;
-use std::collections::VecDeque;
+use std::path::Path;
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
-use webrtc_vad::{SampleRate, Vad, VadMode};
+use sherpa_rs::silero_vad::{SileroVad, SileroVadConfig};
 
-#[allow(dead_code)]
 pub struct VoiceActivityDetector {
-    vad: Vad,
-    sample_rate: SampleRate,
-    frame_size: usize,
-    buffer: VecDeque<f32>,
+    vad: SileroVad,
+    window_size: usize,
+    sample_rate: u32,
     silence_timeout: Duration,
     last_speech_time: Option<Instant>,
     speech_detected: bool,
+    pending_samples: Vec<f32>,
 }
 
-#[allow(dead_code)]
 impl VoiceActivityDetector {
-    pub fn new(sample_rate: u32, sensitivity: i32, silence_timeout_ms: u32) -> Result<Self> {
-        let sample_rate_enum = match sample_rate {
-            8000 => SampleRate::Rate8kHz,
-            16000 => SampleRate::Rate16kHz,
-            32000 => SampleRate::Rate32kHz,
-            48000 => SampleRate::Rate48kHz,
-            _ => return Err(anyhow::anyhow!("Unsupported sample rate: {}", sample_rate)),
+    pub fn new<P: AsRef<Path>>(
+        model_path: P,
+        sample_rate: u32,
+        _sensitivity: i32,  // Silero doesn't use this the same way
+        silence_timeout_ms: u32,
+    ) -> Result<Self> {
+        let model_path_str = model_path.as_ref().to_string_lossy().to_string();
+
+        if !model_path.as_ref().exists() {
+            return Err(anyhow::anyhow!(
+                "VAD model not found: {}. Run scripts/download-parakeet.sh to download.",
+                model_path_str
+            ));
+        }
+
+        let window_size: usize = 512;  // Standard window size for Silero VAD
+
+        let config = SileroVadConfig {
+            model: model_path_str,
+            window_size: window_size as i32,
+            threshold: 0.5,  // Speech detection threshold
+            min_silence_duration: 0.25,  // 250ms minimum silence
+            min_speech_duration: 0.1,   // 100ms minimum speech
+            ..Default::default()
         };
 
-        let vad_mode = match sensitivity {
-            0 => VadMode::Quality,
-            1 => VadMode::LowBitrate,
-            2 => VadMode::Aggressive,
-            3 => VadMode::VeryAggressive,
-            _ => VadMode::Quality,
-        };
-
-        let mut vad = Vad::new();
-        vad.set_mode(vad_mode);
-
-        // Frame size must be 10, 20, or 30ms worth of samples
-        let frame_size = match sample_rate {
-            8000 => 160,   // 20ms at 8kHz
-            16000 => 320,  // 20ms at 16kHz  
-            32000 => 640,  // 20ms at 32kHz
-            48000 => 960,  // 20ms at 48kHz
-            _ => unreachable!(),
-        };
+        // The second parameter is max_speech_duration in seconds
+        let vad = SileroVad::new(config, 30.0)
+            .map_err(|e| anyhow::anyhow!("Failed to initialize Silero VAD: {}", e))?;
 
         info!(
-            "WebRTC VAD initialized: {}Hz, mode: Quality/LowBitrate/Aggressive/VeryAggressive, frame_size: {}",
-            sample_rate, frame_size
+            "Silero VAD initialized: {}Hz, window_size: {}, silence_timeout: {}ms",
+            sample_rate, window_size, silence_timeout_ms
         );
 
         Ok(Self {
             vad,
-            sample_rate: sample_rate_enum,
-            frame_size,
-            buffer: VecDeque::new(),
+            window_size,
+            sample_rate,
             silence_timeout: Duration::from_millis(silence_timeout_ms as u64),
             last_speech_time: None,
             speech_detected: false,
+            pending_samples: Vec::new(),
         })
     }
 
+    /// Process audio samples and return VAD result
     pub fn process_audio(&mut self, samples: &[f32]) -> VadResult {
-        // Add samples to buffer
-        self.buffer.extend(samples);
+        // Accumulate samples
+        self.pending_samples.extend_from_slice(samples);
 
-        let mut has_speech = false;
-        let mut _processed_frames = 0;
+        let mut has_speech_in_frame = false;
 
-        // Process complete frames
-        while self.buffer.len() >= self.frame_size {
-            let frame: Vec<f32> = self.buffer.drain(..self.frame_size).collect();
-            
-            // Convert f32 to i16 for WebRTC VAD
-            let frame_i16: Vec<i16> = frame
-                .iter()
-                .map(|&sample| (sample.clamp(-1.0, 1.0) * 32767.0) as i16)
-                .collect();
+        // Process complete windows
+        while self.pending_samples.len() >= self.window_size {
+            let window: Vec<f32> = self.pending_samples.drain(..self.window_size).collect();
 
-            // Run VAD on this frame
-            match self.vad.is_voice_segment(&frame_i16) {
-                Ok(is_speech) => {
-                    if is_speech {
-                        has_speech = true;
-                        self.last_speech_time = Some(Instant::now());
-                        
-                        if !self.speech_detected {
-                            debug!("🎤 Speech detected");
-                            self.speech_detected = true;
-                        }
-                    }
-                    _processed_frames += 1;
-                }
-                Err(_e) => {
-                    debug!("VAD processing error occurred");
-                    continue;
+            // Feed to Silero VAD
+            self.vad.accept_waveform(window);
+
+            // Check if speech detected
+            if self.vad.is_speech() {
+                has_speech_in_frame = true;
+                self.last_speech_time = Some(Instant::now());
+
+                if !self.speech_detected {
+                    debug!("Speech detected");
+                    self.speech_detected = true;
                 }
             }
         }
 
-        // Determine current state
+        // Determine current state based on timeout
         let now = Instant::now();
-        let is_silent = if let Some(last_speech) = self.last_speech_time {
-            now.duration_since(last_speech) > self.silence_timeout
-        } else {
-            true
-        };
+        let silence_duration = self.last_speech_time
+            .map(|t| now.duration_since(t))
+            .unwrap_or(Duration::MAX);
 
-        if is_silent && self.speech_detected {
-            debug!("🔇 Silence timeout reached");
+        if self.speech_detected && silence_duration > self.silence_timeout {
+            debug!("Silence timeout reached ({:?})", silence_duration);
             self.speech_detected = false;
             VadResult::SilenceDetected
-        } else if has_speech {
+        } else if has_speech_in_frame {
             VadResult::SpeechDetected
         } else {
             VadResult::Silence
         }
     }
 
+    /// Reset VAD state for new recording session
     pub fn reset(&mut self) {
-        self.buffer.clear();
+        self.vad.clear();
+        self.pending_samples.clear();
         self.last_speech_time = None;
         self.speech_detected = false;
         debug!("VAD state reset");
     }
 
+    /// Check if speech is currently active
     pub fn is_speech_active(&self) -> bool {
         self.speech_detected
+    }
+
+    /// Flush any remaining samples and finalize
+    pub fn flush(&mut self) {
+        self.vad.flush();
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub enum VadResult {
+    /// Speech is currently being detected
     SpeechDetected,
+    /// No speech detected in current frame (but may still be in speech session)
     Silence,
-    SilenceDetected, // Transition from speech to silence (timeout)
+    /// Transition from speech to silence - timeout reached, recording should stop
+    SilenceDetected,
 }

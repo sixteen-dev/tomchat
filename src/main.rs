@@ -3,6 +3,7 @@ mod speech;
 mod input;
 mod config;
 mod app;
+mod text_refinement;
 
 use anyhow::Result;
 use clap::Parser;

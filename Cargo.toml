@@ -17,14 +17,14 @@ tokio = { version = "1.0", features = ["full"] }
 # Audio capture
 cpal = "0.15"
 
-# Voice Activity Detection  
-webrtc-vad = "0.4"
-
-# Speech-to-text (Codeberg maintained version)
-whisper-rs = { git = "https://codeberg.org/tazz4843/whisper-rs" }
+# Speech-to-text using sherpa-onnx (Parakeet model)
+sherpa-rs = { version = "0.6", features = ["download-binaries"] }
 
 # Global hotkey detection
 global-hotkey = "0.5"
+
+# System tray icon (Linux)
+ksni = "0.3"
 
 # Text injection/automation
 enigo = "0.2"
@@ -37,9 +37,6 @@ toml = "0.8"
 # Error handling
 anyhow = "1.0"
 
-# HTTP client for sending state updates (using rustls instead of openssl)
-reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
-
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -50,6 +47,14 @@ crossbeam-channel = "0.5"
 
 # Command line argument parsing
 clap = { version = "4.0", features = ["derive"] }
+
+# Text refinement with Ollama (much simpler and more reliable)
+ollama-rs = "0.3.2"
+url = "2.4"
+
+# Features
+[features]
+default = []
 
 [profile.release]
 lto = true

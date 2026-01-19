@@ -3,36 +3,55 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{error, info, debug};
-use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
-
-use whisper_rs::WhisperState;
+use sherpa_rs::transducer::{TransducerConfig, TransducerRecognizer};
 
 pub struct SpeechTranscriber {
-    context: Arc<RwLock<WhisperContext>>,
-    state: Arc<RwLock<WhisperState>>, // Reuse state instead of creating new one
+    recognizer: Arc<RwLock<TransducerRecognizer>>,
+    sample_rate: u32,
 }
 
-#[allow(dead_code)]
 impl SpeechTranscriber {
-    pub fn new<P: AsRef<Path>>(model_path: P, _language: Option<&str>) -> Result<Self> {
-        info!("Loading Whisper model from: {:?}", model_path.as_ref());
-        
-        // Load the Whisper model
-        let ctx = WhisperContext::new_with_params(
-            model_path.as_ref().to_str().unwrap(),
-            WhisperContextParameters::default(),
-        )
-        .map_err(|e| anyhow::anyhow!("Failed to load Whisper model: {}", e))?;
+    pub fn new<P: AsRef<Path>>(model_dir: P, _language: Option<&str>) -> Result<Self> {
+        let model_path = model_dir.as_ref();
+        info!("Loading Parakeet model from: {:?}", model_path);
 
-        info!("Whisper model loaded successfully");
+        // Build paths to the ONNX model files
+        let encoder_path = model_path.join("encoder.int8.onnx");
+        let decoder_path = model_path.join("decoder.int8.onnx");
+        let joiner_path = model_path.join("joiner.int8.onnx");
+        let tokens_path = model_path.join("tokens.txt");
 
-        // Create state once during initialization
-        let state = ctx.create_state()
-            .map_err(|e| anyhow::anyhow!("Failed to create Whisper state: {}", e))?;
+        // Verify files exist
+        for path in [&encoder_path, &decoder_path, &joiner_path, &tokens_path] {
+            if !path.exists() {
+                return Err(anyhow::anyhow!(
+                    "Model file not found: {:?}. Run scripts/download-parakeet.sh to download the model.",
+                    path
+                ));
+            }
+        }
+
+        let config = TransducerConfig {
+            encoder: encoder_path.to_string_lossy().to_string(),
+            decoder: decoder_path.to_string_lossy().to_string(),
+            joiner: joiner_path.to_string_lossy().to_string(),
+            tokens: tokens_path.to_string_lossy().to_string(),
+            num_threads: 4,  // Use multiple threads for faster inference
+            sample_rate: 16_000,
+            feature_dim: 80,
+            debug: false,
+            model_type: "nemo_transducer".to_string(),
+            ..Default::default()
+        };
+
+        let recognizer = TransducerRecognizer::new(config)
+            .map_err(|e| anyhow::anyhow!("Failed to create Parakeet recognizer: {}", e))?;
+
+        info!("Parakeet model loaded successfully");
 
         Ok(Self {
-            context: Arc::new(RwLock::new(ctx)),
-            state: Arc::new(RwLock::new(state)),
+            recognizer: Arc::new(RwLock::new(recognizer)),
+            sample_rate: 16_000,
         })
     }
 
@@ -41,60 +60,34 @@ impl SpeechTranscriber {
             return Ok(String::new());
         }
 
-        info!("🎯 Transcribing {} samples", audio_data.len());
+        info!("Transcribing {} samples ({:.2}s of audio)",
+              audio_data.len(),
+              audio_data.len() as f32 / self.sample_rate as f32);
 
-        // Convert f32 samples to i16 format (like the working example) - no normalization
-        let i16_samples: Vec<i16> = audio_data.iter()
-            .map(|&sample| (sample * 32767.0).clamp(-32768.0, 32767.0) as i16)
-            .collect();
-            
-        // Convert i16 to f32 using whisper-rs proper conversion
-        let mut converted_samples = vec![0.0f32; i16_samples.len()];
-        whisper_rs::convert_integer_to_float_audio(&i16_samples, &mut converted_samples)
-            .map_err(|e| anyhow::anyhow!("Failed to convert audio: {}", e))?;
+        let start = std::time::Instant::now();
 
-        // Reuse the pre-created state (much faster!)
-        let mut state = self.state.write().await;
+        // Get mutable access to recognizer
+        let mut recognizer = self.recognizer.write().await;
 
-        // Speed-optimized params for small.en model
-        let mut params = FullParams::new(SamplingStrategy::Greedy { 
-            best_of: 1        // Single best for speed
-        });
-        
-        // Minimal params for maximum speed
-        params.set_suppress_blank(true);        
-        params.set_temperature(0.0);            
-        params.set_language(Some("en"));        
-        params.set_translate(false);
-        params.set_token_timestamps(false);     // Disable timestamps for speed
-        
-        // Run the transcription with reused state (no initialization overhead!)
-        state.full(params, &converted_samples)
-            .map_err(|e| anyhow::anyhow!("Transcription failed: {}", e))?;
+        // Transcribe - sherpa-rs expects f32 samples
+        let result = recognizer.transcribe(self.sample_rate, audio_data);
 
-        // Extract transcribed text
-        let num_segments = state.full_n_segments();
-        let mut result = String::new();
-        
-        for i in 0..num_segments {
-            if let Some(segment) = state.get_segment(i) {
-                let text = segment.to_string().trim().to_string();
-                if !text.is_empty() {
-                    if !result.is_empty() {
-                        result.push(' ');
-                    }
-                    result.push_str(&text);
-                }
-            }
-        }
-        
-        info!("📝 Transcription: \"{}\"", result);
-        Ok(result)
+        let elapsed = start.elapsed();
+        let audio_duration = audio_data.len() as f32 / self.sample_rate as f32;
+        let rtf = elapsed.as_secs_f32() / audio_duration;
+
+        // Clean up result - lowercase and trim
+        let cleaned = result.trim().to_string();
+
+        info!("Transcription complete in {:.2}s (RTF: {:.2}x): \"{}\"",
+              elapsed.as_secs_f32(), rtf, cleaned);
+
+        Ok(cleaned)
     }
 
     pub async fn transcribe_streaming(&self, audio_chunks: Vec<Vec<f32>>) -> Result<Vec<String>> {
         let mut results = Vec::new();
-        
+
         for chunk in audio_chunks {
             match self.transcribe_audio(&chunk).await {
                 Ok(text) => {
@@ -107,22 +100,11 @@ impl SpeechTranscriber {
                 }
             }
         }
-        
+
         Ok(results)
     }
 
-    // Get model information
     pub async fn get_model_info(&self) -> String {
-        let _ctx = self.context.read().await;
-        format!("Whisper model loaded, vocab size: (info not available in current API)")
+        "Parakeet TDT 0.6B v2 (INT8 quantized)".to_string()
     }
-}
-
-// Helper function to calculate RMS (Root Mean Square) for audio quality assessment
-fn calculate_rms(samples: &[f32]) -> f32 {
-    if samples.is_empty() {
-        return 0.0;
-    }
-    let sum_of_squares: f32 = samples.iter().map(|&s| s * s).sum();
-    (sum_of_squares / samples.len() as f32).sqrt()
 }

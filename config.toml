@@ -1,5 +1,5 @@
 # TomChat Configuration
-# Named after Tommy 🐕
+# Named after Tommy
 
 [hotkey]
 # Configurable hotkey combination
@@ -12,16 +12,46 @@ channels = 1
 buffer_duration_ms = 64  # Low latency
 
 [vad]
-# Voice Activity Detection settings  
+# Voice Activity Detection settings (Silero VAD)
+model_path = "./models/silero_vad.onnx"
 sensitivity = "Normal"  # Low, Normal, High, VeryHigh
-timeout_ms = 500       # Stop recording after silence
+timeout_ms = 1500       # Stop recording 1.5s after last speech
+auto_stop = true        # Auto-stop recording when silence detected
 
-[whisper]
-# Whisper model settings
-model_path = "./models/ggml-small.en-q8_0.bin"
+[speech]
+# Parakeet TDT 0.6B v2 model settings
+model_dir = "./models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8"
 language = "en"
-translate = false
 
 [text]
 # Text injection settings
 typing_delay_ms = 1  # Delay between keystrokes
+
+[text_refinement]
+# Text refinement with Ollama - disabled since Parakeet is accurate enough
+enabled = false
+model_name = "gemma3:1b"  # Use Gemma 3 1B via Ollama for text refinement
+ollama_url = "http://localhost:11434"
+device = "cpu"
+cpu_threads = 0  # Auto-detect CPU threads
+quantization = "int4"
+batch_size = 1
+
+# Context-aware technical correction prompt
+prompt_template = """Read and understand the entire transcription first to grasp the full context and meaning. Then fix only obvious speech-to-text transcription errors in this technical text.
+
+Do NOT change the meaning, tone, or intent. Only correct:
+- Clear mishearings of technical terms (considering the full context)
+- Missing punctuation
+- Capitalization
+
+Preserve the exact same meaning and sentence structure. Return only the corrected version.
+
+{text}"""
+
+# Performance and fallback settings
+max_tokens = 300  # Allow for longer transcriptions and corrections
+temperature = 0.3  # Balanced temperature for corrections
+timeout_ms = 8000  # 8 seconds timeout for CPU inference
+max_retries = 1
+fallback_on_timeout = true  # Always fallback to original if slow

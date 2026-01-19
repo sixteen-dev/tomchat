@@ -1,238 +1,240 @@
-# TomChat 🐕
+# TomChat
 
-> Speech-to-Text Hotkey Application - Named after Tommy
+> Fast, local speech-to-text with a global hotkey (CLI version)
 
-TomChat is a lightweight Linux application that converts speech to text using Whisper AI and injects it into any text field via a global hotkey. Built with Rust using professional, battle-tested crates.
+TomChat is a lightweight Linux CLI application that converts speech to text and types it into any application. Press a hotkey, speak, and your words appear. All processing happens locally - no cloud services required.
 
 ## Features
 
-- 🎤 **Local Speech-to-Text** - Uses Whisper AI model locally (no internet required)
-- ⌨️ **Global Hotkey Activation** - Works in any application with text input
-- 🔇 **Smart Silence Detection** - Auto-stops recording after silence timeout
-- 📝 **Automatic Text Injection** - Types transcribed text directly into active application
-- 🚀 **High Performance** - Async Rust implementation with professional crates
-- 🔧 **Configurable** - TOML-based configuration for all settings
+- **Local Speech Recognition** - NVIDIA Parakeet TDT 0.6B with ~6% WER (better than Whisper)
+- **Voice Activity Detection** - Silero VAD auto-stops recording after silence
+- **Global Hotkey** - Works in any application (Caps Lock by default)
+- **Text Refinement** - Optional Ollama integration for fixing transcription errors
+- **Lightweight** - Pure Rust CLI, ~400MB memory usage
 
-## Architecture
+## Requirements
 
-**Professional Crates Used:**
-- **Audio**: `cpal` for cross-platform audio capture
-- **VAD**: `webrtc-vad` for voice activity detection  
-- **Speech**: `whisper-rs` for local Whisper AI transcription
-- **Hotkeys**: `global-hotkey` for system-wide key detection
-- **Text**: `enigo` for cross-platform text injection
-- **Async**: `tokio` for high-performance async runtime
-
-## Prerequisites
-
-### System Dependencies
-
-1. **Whisper Model** - Download automatically:
-   ```bash
-   # Quick setup - downloads base model (142MB)
-   ./scripts/download-model.sh
-   
-   # Or choose specific model size
-   ./scripts/download-model.sh small    # 466MB, better accuracy
-   ./scripts/download-model.sh tiny     # 39MB, fastest
-   ```
-
-2. **Audio System** - ALSA (usually pre-installed on Linux)
-
-3. **Development Tools** - Rust toolchain with libclang:
-   ```bash
-   # libclang should already be available at:
-   /usr/lib/x86_64-linux-gnu/libclang-14.so
-   ```
+- **OS**: Linux (Ubuntu 22.04+ recommended)
+- **RAM**: 2GB minimum
+- **Disk**: ~200MB for models
 
 ## Quick Start
 
-1. **Setup**:
-   ```bash
-   cd /home/sujshe/src/tomchat
-   ./scripts/download-model.sh          # Downloads base model
-   ```
+### 1. Install Dependencies
 
-2. **Build & Run**:
-   ```bash
-   LIBCLANG_PATH="/usr/lib/x86_64-linux-gnu" cargo build --release
-   ./target/release/tomchat
-   ```
+```bash
+sudo apt update
+sudo apt install -y \
+    build-essential \
+    libasound2-dev \
+    libssl-dev \
+    pkg-config \
+    wget
 
-3. **Test**: Press **Meta+Shift**, speak, and see transcribed text appear!
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
+```
+
+### 2. Clone and Build
+
+```bash
+git clone https://github.com/sixteen-dev/tomchat.git
+cd tomchat
+cargo build --release
+```
+
+### 3. Download Models
+
+```bash
+# Run the download script
+./scripts/download-parakeet.sh
+```
+
+This downloads:
+- **Parakeet TDT 0.6B v2 (INT8)** - ~180MB speech recognition model
+- **Silero VAD** - ~2MB voice activity detection model
+
+After downloading, your `models/` directory should contain:
+```
+models/
+├── sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/
+│   ├── encoder.int8.onnx
+│   ├── decoder.int8.onnx
+│   ├── joiner.int8.onnx
+│   └── tokens.txt
+└── silero_vad.onnx
+```
+
+### 4. Run
+
+```bash
+# Use the wrapper script (sets library path automatically)
+./tomchat
+
+# Or run directly with library path
+LD_LIBRARY_PATH=./target/release ./target/release/tomchat
+```
+
+### 5. Use
+
+1. Press **Caps Lock** to start recording
+2. Speak into your microphone
+3. Wait for auto-stop (1.5s silence) or press **Caps Lock** again
+4. Text appears in the focused application
 
 ## Configuration
 
-Edit `config.toml` to customize settings:
+Edit `config.toml` to customize:
 
 ```toml
 [hotkey]
-# Current: Super+Shift (Windows/Super + Shift keys)
-combination = "super+shift"
-
-[audio]
-sample_rate = 16000      # Whisper-optimized sample rate
-channels = 1             # Mono audio
-buffer_duration_ms = 64  # Low latency
+combination = "caps"  # Options: "caps", "ctrl+shift+space", "f24", etc.
 
 [vad]
-sensitivity = "Normal"   # Voice activity detection: Low, Normal, High, VeryHigh  
-timeout_ms = 500        # Stop recording after 500ms of silence
+model_path = "./models/silero_vad.onnx"
+sensitivity = "Normal"  # Low, Normal, High, VeryHigh
+timeout_ms = 1500       # Auto-stop after this much silence
+auto_stop = true        # Set false for manual stop only
 
-[whisper]
-# Download models with: ./scripts/download-model.sh
-model_path = "./models/ggml-base.bin"  # Automatically downloaded
+[speech]
+model_dir = "./models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8"
 language = "en"
-translate = false
 
-[text]
-typing_delay_ms = 1     # Delay between keystrokes
+[text_refinement]
+enabled = false         # Enable for Ollama-based text cleanup
+model_name = "gemma3:1b"
+ollama_url = "http://localhost:11434"
 ```
 
 ### Environment Variables
 
-Override config with environment variables:
-
 ```bash
-# Use different model
-export TOMCHAT_MODEL_PATH="/path/to/your/model.bin"
-
-# Use different hotkey  
+export TOMCHAT_MODEL_DIR="/path/to/models"
 export TOMCHAT_HOTKEY="ctrl+alt+c"
-
-# Run with overrides
-./target/release/tomchat
 ```
 
-### Model Management
+## Text Refinement (Optional)
 
-**Available Models:**
-- `tiny` (39MB) - Fastest, English-only, lower accuracy
-- `base` (142MB) - **Recommended** - Good balance of speed/accuracy
-- `small` (466MB) - Better accuracy, slower
-- `medium` (1.5GB) - High accuracy, much slower
-- `large-v3` (2.9GB) - Highest accuracy, very slow
+TomChat can use Ollama to fix transcription errors:
 
-**Download Options:**
 ```bash
-./scripts/download-model.sh base      # Recommended
-./scripts/download-model.sh small     # Better quality
-./scripts/download-model.sh tiny      # Fastest
+# Install Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Pull a small model
+ollama pull gemma3:1b
+
+# Enable in config.toml
+[text_refinement]
+enabled = true
 ```
 
-## Usage
+This fixes issues like:
+- "cooper nettys" → "Kubernetes"
+- Missing punctuation and capitalization
 
-1. **Start TomChat**:
-   ```bash
-   cd /home/sujshe/src/tomchat
-   ./target/release/tomchat
-   ```
+## Manual Model Download
 
-2. **You should see**:
-   ```
-   🐕 TomChat - Speech-to-Text Hotkey Application
-      Named after Tommy
-      Powered by Rust + Professional Crates
-   ✅ Configuration loaded successfully
-   🚀 TomChat is ready! Press meta+shift to start recording.
-   Press Ctrl+C to exit.
-   ```
+If the script doesn't work, download manually:
 
-3. **Test the Feature**:
-   - Open any text editor (VS Code, terminal, browser text field, etc.)
-   - Press **Meta+Shift** (Windows/Super key + Shift)
-   - Speak clearly into your microphone
-   - TomChat will automatically stop after silence and inject the transcribed text
-
-## Testing
-
-### Quick Test
-
-1. **Terminal Test**:
-   ```bash
-   # Open a new terminal
-   nano test.txt
-   # Press Meta+Shift, say "Hello world this is a test"
-   # Should see text appear in nano
-   ```
-
-2. **Browser Test**:
-   - Open browser, go to any text field
-   - Press Meta+Shift, speak your message
-   - Text should appear in the field
-
-3. **VS Code Test**:
-   - Open VS Code with a file
-   - Press Meta+Shift, dictate some code or comments
-   - Should see transcribed text
-
-### Troubleshooting
-
-**Audio Issues**:
 ```bash
-# Check audio devices
+mkdir -p models
+cd models
+
+# Parakeet model
+wget https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2
+tar xjf sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2
+rm sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2
+
+# Silero VAD
+wget https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
+```
+
+## Troubleshooting
+
+### Hotkey Not Working
+
+```bash
+# Try a different hotkey in config.toml
+combination = "ctrl+shift+space"
+
+# Or use a function key
+combination = "f24"
+```
+
+### Audio Issues
+
+```bash
+# List audio devices
 arecord -l
 
-# Test microphone
-arecord -f cd -t wav -d 5 test.wav && aplay test.wav
+# Test recording
+arecord -d 3 test.wav && aplay test.wav
 ```
 
-**Hotkey Issues**:
-- Try different key combinations in config.toml:
-  - `"ctrl+alt+c"` (safe alternative)
-  - `"super+shift"` (Windows/Super key + Shift - current default)  
-  - `"ctrl+shift+space"` (Ctrl + Shift + Space)
-  - `"f24"` (if Copilot key sends F24)
+### Library Not Found
 
-**Supported Keys:**
-- **Modifiers**: `ctrl`, `shift`, `alt`, `super`/`win`/`meta`
-- **Keys**: `space`, `a-z`, `f1-f24`, etc.
-
-**Model Issues**:
-- Verify model exists: `ls -la /home/sujshe/src/whisper-hotkey-cpp/models/ggml-small.bin`
-- Download if missing from [Whisper models](https://huggingface.co/ggerganov/whisper.cpp)
-
-**Permission Issues**:
-- Ensure user is in `audio` group: `groups $USER`
-- Add if needed: `sudo usermod -a -G audio $USER`
-
-## Development
-
-**Debug Build**:
 ```bash
-LIBCLANG_PATH="/usr/lib/x86_64-linux-gnu" cargo build
-./target/debug/tomchat
+# Always use the wrapper script
+./tomchat
+
+# Or set LD_LIBRARY_PATH manually
+LD_LIBRARY_PATH=./target/release ./target/release/tomchat
 ```
 
-**View Logs**:
+### Debug Mode
+
 ```bash
-RUST_LOG=debug ./target/release/tomchat
+RUST_LOG=debug ./tomchat
 ```
 
-**Hot Reload Development**:
-```bash
-cargo watch -x 'build' -x 'run'
+## Project Structure
+
+```
+tomchat/
+├── src/
+│   ├── main.rs           # Entry point
+│   ├── app.rs            # Application logic
+│   ├── config.rs         # Configuration handling
+│   ├── audio/
+│   │   ├── mod.rs        # Audio capture
+│   │   └── vad.rs        # Voice activity detection
+│   ├── speech/
+│   │   └── transcriber.rs # Parakeet transcription
+│   └── text_refinement/  # Optional Ollama integration
+├── scripts/
+│   └── download-parakeet.sh
+├── config.toml           # Default configuration
+├── Cargo.toml
+└── README.md
 ```
 
 ## Performance
 
-- **Startup**: ~1-2 seconds (loading Whisper model)
-- **Activation**: Instant hotkey detection
-- **Transcription**: ~1-3 seconds depending on speech length
-- **Memory**: ~100-200MB (mainly Whisper model)
-- **CPU**: Low idle, moderate during transcription
+| Metric | Value |
+|--------|-------|
+| Startup | ~2-3s |
+| Transcription | 0.5-2s |
+| Memory | ~400MB |
+| Model Size | ~200MB |
 
-## Integration with Claude Code
+## Tech Stack
 
-TomChat is designed to work seamlessly with Claude Code:
+- **[sherpa-rs](https://github.com/thewh1teagle/sherpa-rs)** - Rust bindings for sherpa-onnx
+- **[cpal](https://github.com/RustAudio/cpal)** - Cross-platform audio
+- **[global-hotkey](https://github.com/tauri-apps/global-hotkey)** - System-wide hotkeys
+- **[enigo](https://github.com/enigo-rs/enigo)** - Text injection
+- **[tokio](https://tokio.rs/)** - Async runtime
 
-1. **Start TomChat** in background
-2. **Open Claude Code** terminal or any text field  
-3. **Press Meta+Shift** and speak your query/code
-4. **Continue conversation** with transcribed text
+## Related
 
-Perfect for hands-free coding sessions!
+- **[tomchat-app](https://github.com/sixteen-dev/tomchat-app)** - GUI version with Tauri
+
+## License
+
+MIT License - see [LICENSE](LICENSE)
 
 ---
 
-**Named after Tommy 🐕** - Built with Rust + Professional Crates
+**Named after Tommy** - Built with Rust + sherpa-rs
