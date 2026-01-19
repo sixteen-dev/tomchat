@@ -10,13 +10,13 @@ TomChat is a lightweight Linux CLI application that converts speech to text and 
 - **Voice Activity Detection** - Silero VAD auto-stops recording after silence
 - **Global Hotkey** - Works in any application (Caps Lock by default)
 - **Text Refinement** - Optional Ollama integration for fixing transcription errors
-- **Lightweight** - Pure Rust CLI, ~400MB memory usage
+- **Lightweight** - Pure Rust CLI, minimal footprint
 
 ## Requirements
 
 - **OS**: Linux (Ubuntu 22.04+ recommended)
-- **RAM**: 2GB minimum
-- **Disk**: ~200MB for models
+- **RAM**: 4GB minimum
+- **Disk**: ~200MB for models (INT8)
 
 ## Quick Start
 
