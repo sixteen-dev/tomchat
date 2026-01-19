@@ -216,8 +216,8 @@ tomchat/
 |--------|-------|
 | Startup | ~2-3s |
 | Transcription | 0.5-2s |
-| Memory | ~400MB |
-| Model Size | ~200MB |
+| Memory | ~1.5GB |
+| Model Size | ~200MB (INT8) |
 
 ## Tech Stack
 
